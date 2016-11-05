@@ -5,11 +5,13 @@ m = nil
 relayPin = 6
 buttonPin = 3
 ledPin = 7
+-- spare = 5
 
 gpio.mode(relayPin, gpio.OUTPUT)
 gpio.write(relayPin, gpio.LOW)
 
-buttonDebounce = 250
+local buttonDebounce = 500
+local buttonAlarmId = 2
 gpio.mode(buttonPin, gpio.INPUT, gpio.PULLUP)
 
 gpio.mode(ledPin, gpio.OUTPUT)
@@ -21,9 +23,34 @@ local function flash_led()
     tmr.alarm(5, 50, 0, function() gpio.write(ledPin, gpio.HIGH) end)
 end
 
+local function mqtt_update()
+    if (gpio.read(relayPin) == 0) then
+        state = 'OFF'
+    else
+        state = 'ON'
+    end
+    m:publish(config.ENDPOINT .. config.ID .. "/state/", state, 0, 0)
+    flash_led()
+end
+
+
+local function switch_relay(state)
+    state = state or 1 -- switch on by default
+    if (state == 1) then
+        print("switching on")
+        gpio.write(relayPin, gpio.HIGH)
+    else
+        print("switching off")
+        gpio.write(relayPin, gpio.LOW)
+    end
+    mqtt_update()
+end
 
 local function toggle_relay()
-    tmr.delay(buttonDebounce)
+    gpio.trig(buttonPin, "none")
+    tmr.alarm(buttonAlarmId, buttonDebounce, tmr.ALARM_SINGLE, function() 
+        gpio.trig(buttonPin, "down", toggle_relay)
+    end)
     if (gpio.read(relayPin) == 0) then
         switch_relay(1)
     else
@@ -43,18 +70,6 @@ local function register_myself()
     m:subscribe(config.ENDPOINT .. config.ID, 0, function(conn)
         print("subscribed at " .. config.ENDPOINT .. config.ID)
     end)
-end
-
-local function switch_relay(state)
-    state = state or 1 -- switch on by default
-    if (state == 1) then
-        print("switching on")
-        gpio.write(relayPin, gpio.HIGH)
-    else
-        print("switching off")
-        gpio.write(relayPin, gpio.LOW)
-    end
-    mqtt_update()
 end
 
 
@@ -89,16 +104,6 @@ local function mqtt_start()
         print("failed: " .. reason)
     end) 
 
-end
-
-local function mqtt_update()
-    if (gpio.read(relayPin) == 0) then
-        state = 'OFF'
-    else
-        state = 'ON'
-    end
-    m.publish(config.ENDPOINT .. config.ID .. "/state/" .. state, 0, 0)
-    flash_led()
 end
 
 function module.start()  
