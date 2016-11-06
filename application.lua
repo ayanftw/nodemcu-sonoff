@@ -17,6 +17,7 @@ gpio.mode(buttonPin, gpio.INPUT, gpio.PULLUP)
 gpio.mode(ledPin, gpio.OUTPUT)
 gpio.write(ledPin, gpio.HIGH)
 
+
 local function flash_led()
     if (gpio.read(ledPin) == 1) then gpio.write(ledPin, gpio.HIGH) end
     gpio.write(ledPin, gpio.LOW)
@@ -74,23 +75,6 @@ end
 
 
 local function mqtt_start()  
-    m = mqtt.Client('sonoff-' .. config.ID, 120, config.MQTT_USER, config.MQTT_PASS)
-    -- register message callback beforehand
-    m:on("message", function(conn, topic, data) 
-      if data ~= nil then
-        print(topic .. ": " .. data)
-        if (data == 'ON' or data == 1) then
-            switch_relay(1)
-        elseif (data == 'OFF' or data == 0) then
-            switch_relay(0)
-        else
-            print("invalid data (" .. data .. ")")
-        end
-      end
-    end)
-
-    m:on("connect", function(client) print("connected") end)
-    m:on("offline", function(client) print("offline") end)
 
     -- Connect to broker
     m:connect(config.MQTT_HOST, config.MQTT_PORT, 0, 1,
@@ -109,6 +93,24 @@ end
 function module.start()  
     mqtt_start()
 end
+
+m = mqtt.Client('sonoff-' .. config.ID, 120, config.MQTT_USER, config.MQTT_PASS)
+-- register message callback beforehand
+m:on("message", function(conn, topic, data) 
+    if data ~= nil then
+        print(topic .. ": " .. data)
+        if (data == 'ON' or data == 1) then
+            switch_relay(1)
+        elseif (data == 'OFF' or data == 0) then
+            switch_relay(0)
+        else
+            print("invalid data (" .. data .. ")")
+        end
+    end
+end)
+
+m:on("connect", function(client) print("connected") end)
+m:on("offline", function(client) print("offline") end)
 
 gpio.trig(buttonPin, "down", toggle_relay)
 
