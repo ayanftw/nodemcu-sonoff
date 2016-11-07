@@ -1,6 +1,9 @@
 -- file : application.lua
-local module = {}  
-m = nil
+local module = {}
+m = mqtt.Client('sonoff-' .. config.ID, 120, config.MQTT_USER, config.MQTT_PASS)
+m:on("connect", function(client) print("connected") end)
+m:on("offline", function(client) print("offline") end)
+
 
 relayPin = 6
 buttonPin = 3
@@ -18,10 +21,14 @@ gpio.mode(ledPin, gpio.OUTPUT)
 gpio.write(ledPin, gpio.HIGH)
 
 
-local function flash_led()
+local function flash_led(num)
+    num = num or 1
     if (gpio.read(ledPin) == 1) then gpio.write(ledPin, gpio.HIGH) end
-    gpio.write(ledPin, gpio.LOW)
-    tmr.alarm(5, 50, 0, function() gpio.write(ledPin, gpio.HIGH) end)
+    for i=1,num,1
+    do
+        gpio.write(ledPin, gpio.LOW)
+        tmr.alarm(5, 50, 0, function() gpio.write(ledPin, gpio.HIGH) end)
+    end
 end
 
 local function mqtt_update()
@@ -44,12 +51,16 @@ local function switch_relay(state)
         print("switching off")
         gpio.write(relayPin, gpio.LOW)
     end
-    mqtt_update()
+    if pcall(mqtt_update) then
+        print("updating mqtt")
+    else
+        flash_led(3)
+    end
 end
 
 local function toggle_relay()
     gpio.trig(buttonPin, "none")
-    tmr.alarm(buttonAlarmId, buttonDebounce, tmr.ALARM_SINGLE, function() 
+    tmr.alarm(buttonAlarmId, buttonDebounce, tmr.ALARM_SINGLE, function()
         gpio.trig(buttonPin, "down", toggle_relay)
     end)
     if (gpio.read(relayPin) == 0) then
@@ -59,59 +70,55 @@ local function toggle_relay()
     end
 end
 
+local function handle_message(client, topic, message)
+    -- register message callback beforehand
+    print("message")
+    if message ~= nil then
+        print(topic .. ": " .. message)
+        if (message == 'ON' or message == 1) then
+            switch_relay(1)
+        elseif (message == 'OFF' or message == 0) then
+            switch_relay(0)
+        else
+            print("invalid message (" .. message .. ")")
+        end
+    end
+end
+m:on("message", handle_message)
 
--- Sends a simple ping to the broker
-local function send_ping()  
-    m:publish(config.ENDPOINT .. "ping","id=" .. config.ID,0,0)
+local function send_ping()
+    m:publish(config.ENDPOINT .. "ping", "id=" .. config.ID, 0, 0)
 end
 
--- Sends my id to the broker for registration
-local function register_myself()  
-    flash_led()
-    m:subscribe(config.ENDPOINT .. config.ID, 0, function(conn)
-        print("subscribed at " .. config.ENDPOINT .. config.ID)
+local function register_client(client)
+    -- subscribe to a topic and update the ping topic every 1000ms
+    flash_led(2)
+    topic = config.ENDPOINT .. config.ID
+    client:subscribe(topic, 1, function(conn)
+        print("subscribed at " .. topic)
+    end)
+    tmr.stop(6)
+    tmr.alarm(6, 1000, 1,
+    function()
+        if not pcall(send_ping) then
+            flash_led(2)
+        end
     end)
 end
 
 
-local function mqtt_start()  
-
+local function mqtt_start()
     -- Connect to broker
     m:connect(config.MQTT_HOST, config.MQTT_PORT, 0, 1,
-    function(con) 
-        register_myself()
-        -- And then pings each 1000 milliseconds
-        tmr.stop(6)
-        tmr.alarm(6, 1000, 1, send_ping)
-    end,
-    function(client, reason) 
+    register_client,
+    function(client, reason)
         print("failed: " .. reason)
-    end) 
-
+    end)
 end
 
-function module.start()  
+function module.start()
     mqtt_start()
 end
 
-m = mqtt.Client('sonoff-' .. config.ID, 120, config.MQTT_USER, config.MQTT_PASS)
--- register message callback beforehand
-m:on("message", function(conn, topic, data) 
-    if data ~= nil then
-        print(topic .. ": " .. data)
-        if (data == 'ON' or data == 1) then
-            switch_relay(1)
-        elseif (data == 'OFF' or data == 0) then
-            switch_relay(0)
-        else
-            print("invalid data (" .. data .. ")")
-        end
-    end
-end)
-
-m:on("connect", function(client) print("connected") end)
-m:on("offline", function(client) print("offline") end)
-
 gpio.trig(buttonPin, "down", toggle_relay)
-
-return module 
+return module
